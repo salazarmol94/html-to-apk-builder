@@ -7,7 +7,7 @@ PRIMERA PRUEBA:
 2. Ve a Actions.
 3. Selecciona `Build APK from Web ZIP`.
 4. Pulsa `Run workflow`.
-5. Al terminar, descarga el artefacto `html-to-apk-debug`.
+5. Al terminar, descarga el artefacto `.github/workflows/build-apk.yml`.
 
 La interfaz está en `builder/index.html`.
 
