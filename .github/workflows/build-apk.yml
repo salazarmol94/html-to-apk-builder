@@ -3,17 +3,13 @@ name: Crear APK desde HTML
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
-  build-apk:
-    name: Compilar HTML a APK
+  compilar-apk:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Descargar proyecto
-        uses: actions/checkout@v6
+      - name: Repositorio de cheques
+        uses: actions/checkout@v4
 
       - name: Configurar Java 17
         uses: actions/setup-java@v5
@@ -21,36 +17,28 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Configurar SDK de Android
-        uses: android-actions/setup-android@v4
+      - name: Configurar el SDK de Android
+        uses: android-actions/setup-android@v3
 
-      - name: Instalar SDK Android
-        run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+      - name: Instalar paquetes del SDK de Android
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Preparar Gradle 9.6
-        uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: '9.6.0'
-          cache-provider: basic
-
-      - name: Preparar proyecto Android
+      - name: Preparar archivos web
         shell: bash
         run: |
           set -e
-
-          rm -rf apk-project web-source
+          rm -rf apk-project
           mkdir -p apk-project/app/src/main/assets/www
           mkdir -p apk-project/app/src/main/java/com/htmltoapk/builder
           mkdir -p apk-project/app/src/main/res/values
 
-          if [ ! -f "input-web.zip" ]; then
+          if [ ! -f input-web.zip ]; then
             echo "ERROR: No se encontró input-web.zip en la raíz del repositorio."
             exit 1
           fi
 
-          unzip -o input-web.zip -d web-source
+          mkdir -p web-source
+          unzip -q -o input-web.zip -d web-source
 
           INDEX_FILE="$(find web-source -type f -iname 'index.html' -print -quit)"
           if [ -z "$INDEX_FILE" ]; then
@@ -61,14 +49,16 @@ jobs:
           WEB_ROOT="$(dirname "$INDEX_FILE")"
           cp -R "$WEB_ROOT"/. apk-project/app/src/main/assets/www/
 
-          test -f apk-project/app/src/main/assets/www/index.html || {
+          if [ ! -f apk-project/app/src/main/assets/www/index.html ]; then
             echo "ERROR: No se pudo copiar index.html al proyecto Android."
             exit 1
-          }
+          fi
 
-      - name: Crear archivos Gradle
+      - name: Crear proyecto Android
         shell: bash
         run: |
+          set -e
+
           cat > apk-project/settings.gradle <<'EOF'
 pluginManagement {
     repositories {
@@ -92,12 +82,12 @@ EOF
 
           cat > apk-project/build.gradle <<'EOF'
 plugins {
-    id 'com.android.application' version '9.4.0' apply false
+    id 'com.android.application' version '8.7.3' apply false
 }
 EOF
 
           cat > apk-project/gradle.properties <<'EOF'
-org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
+org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
 android.useAndroidX=true
 android.nonTransitiveRClass=true
 EOF
@@ -109,27 +99,24 @@ plugins {
 
 android {
     namespace 'com.htmltoapk.builder'
-    compileSdk 36
+    compileSdk 35
 
     defaultConfig {
         applicationId 'com.htmltoapk.builder'
         minSdk 23
-        targetSdk 36
+        targetSdk 35
         versionCode 1
         versionName '1.0'
     }
 }
 
 dependencies {
-    implementation 'androidx.webkit:webkit:1.15.0'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.webkit:webkit:1.12.1'
 }
 EOF
 
-      - name: Crear AndroidManifest
-        shell: bash
-        run: |
           cat > apk-project/app/src/main/AndroidManifest.xml <<'EOF'
-<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
@@ -137,6 +124,7 @@ EOF
     <application
         android:allowBackup="true"
         android:label="HTML a APK"
+        android:supportsRtl="true"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true">
 
@@ -156,27 +144,23 @@ EOF
 EOF
 
           cat > apk-project/app/src/main/res/values/styles.xml <<'EOF'
-<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#0088CC</item>
+        <item name="android:colorAccent">#00A8FF</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
 </resources>
 EOF
 
-      - name: Crear MainActivity.java
-        shell: bash
-        run: |
           cat > apk-project/app/src/main/java/com/htmltoapk/builder/MainActivity.java <<'EOF'
 package com.htmltoapk.builder;
 
 import android.app.Activity;
 import android.os.Bundle;
+import android.webkit.WebView;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
-import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
 import androidx.webkit.WebViewAssetLoader;
@@ -212,29 +196,21 @@ public class MainActivity extends Activity {
             }
         });
 
-        webView.loadUrl(
-                "https://appassets.androidplatform.net/assets/www/index.html"
-        );
+        webView.loadUrl("https://appassets.androidplatform.net/assets/www/index.html");
 
         setContentView(webView);
     }
 }
 EOF
 
-      - name: Verificar proyecto generado
-        shell: bash
-        run: |
-          test -f apk-project/app/src/main/AndroidManifest.xml
-          test -f apk-project/app/src/main/java/com/htmltoapk/builder/MainActivity.java
-          test -f apk-project/app/src/main/assets/www/index.html
-
-          echo "Contenido del proyecto:"
-          find apk-project/app/src/main/assets/www -maxdepth 2 -type f | sort | head -100
+      - name: Descargar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
 
       - name: Compilar APK
         working-directory: apk-project
-        run: |
-          gradle assembleDebug --no-daemon --stacktrace
+        run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Subir APK
         uses: actions/upload-artifact@v4
