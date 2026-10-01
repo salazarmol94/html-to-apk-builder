@@ -1,0 +1,542 @@
+name: Crear APK EleCal v13
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+          cache-provider: basic
+
+      - name: Prepare project
+        shell: bash
+        run: |
+          set -e
+          rm -rf apk-project web-source
+
+          mkdir -p apk-project/app/src/main/assets/www
+          mkdir -p apk-project/app/src/main/java/com/elecal/app
+          mkdir -p apk-project/app/src/main/res/values
+          mkdir -p apk-project/app/src/main/res/xml
+          mkdir -p apk-project/app/src/main/res/drawable
+          mkdir -p apk-project/app/src/main/res/mipmap-mdpi
+          mkdir -p apk-project/app/src/main/res/mipmap-hdpi
+          mkdir -p apk-project/app/src/main/res/mipmap-xhdpi
+          mkdir -p apk-project/app/src/main/res/mipmap-xxhdpi
+          mkdir -p apk-project/app/src/main/res/mipmap-xxxhdpi
+
+          test -f input-web.zip
+          unzip -o input-web.zip -d web-source
+
+          INDEX_FILE="$(find web-source -type f -iname 'index.html' -print -quit)"
+          test -n "$INDEX_FILE"
+
+          WEB_ROOT="$(dirname "$INDEX_FILE")"
+          cp -R "$WEB_ROOT"/. apk-project/app/src/main/assets/www/
+
+          test -f apk-project/app/src/main/assets/www/index.html
+
+          ICON="$(find "$WEB_ROOT" -type f -iname 'icon.png' -print -quit)"
+          test -n "$ICON"
+
+          cp "$ICON" apk-project/app/src/main/res/drawable/ic_launcher.png
+          cp "$ICON" apk-project/app/src/main/res/mipmap-mdpi/ic_launcher.png
+          cp "$ICON" apk-project/app/src/main/res/mipmap-hdpi/ic_launcher.png
+          cp "$ICON" apk-project/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          cp "$ICON" apk-project/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          cp "$ICON" apk-project/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
+      - name: Create Gradle files
+        shell: bash
+        run: |
+          set -e
+          cat > apk-project/settings.gradle <<'EOF'
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "EleCalAPK"
+include(":app")
+EOF
+
+          cat > apk-project/build.gradle <<'EOF'
+plugins {
+    id 'com.android.application' version '8.7.3' apply false
+}
+EOF
+
+          cat > apk-project/gradle.properties <<'EOF'
+org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
+android.useAndroidX=true
+android.nonTransitiveRClass=true
+EOF
+
+          cat > apk-project/app/build.gradle <<'EOF'
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.elecal.app'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.elecal.app'
+        minSdk 23
+        targetSdk 35
+        versionCode 13
+        versionName '1.0.13'
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.12.1'
+}
+EOF
+
+      - name: Android resources
+        shell: bash
+        run: |
+          cat > apk-project/app/src/main/res/values/strings.xml <<'EOF'
+<resources>
+    <string name="app_name">EleCal</string>
+</resources>
+EOF
+
+          cat > apk-project/app/src/main/res/values/styles.xml <<'EOF'
+<resources>
+    <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#00bcd4</item>
+    </style>
+</resources>
+EOF
+
+          cat > apk-project/app/src/main/res/xml/file_paths.xml <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="camera_cache" path="camera/" />
+</paths>
+EOF
+
+          cat > apk-project/app/src/main/AndroidManifest.xml <<'EOF'
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <application
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:icon="@drawable/ic_launcher"
+        android:roundIcon="@drawable/ic_launcher"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme"
+        android:usesCleartextTraffic="true">
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <activity
+            android:name=".MainActivity"
+            android:label="@string/app_name"
+            android:screenOrientation="portrait"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+        </activity>
+    </application>
+
+</manifest>
+EOF
+
+      - name: Native camera and gallery bridge
+        shell: bash
+        run: |
+          cat > apk-project/app/src/main/java/com/elecal/app/MainActivity.java <<'EOF'
+package com.elecal.app;
+
+import android.Manifest;
+import android.app.Activity;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.net.Uri;
+import android.os.Bundle;
+import android.provider.MediaStore;
+import android.util.Base64;
+import android.webkit.JavascriptInterface;
+import android.webkit.PermissionRequest;
+import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+
+import androidx.annotation.Nullable;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
+import androidx.webkit.WebViewAssetLoader;
+
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.InputStream;
+
+public class MainActivity extends Activity {
+
+    private static final int CAMERA_PERMISSION = 4001;
+    private static final int GALLERY_REQUEST = 4002;
+    private static final int CAMERA_REQUEST = 4003;
+
+    private WebView webView;
+    private Uri cameraUri;
+    private String pendingFieldId;
+
+    @Override
+    protected void onCreate(Bundle state) {
+        super.onCreate(state);
+
+        webView = new WebView(this);
+
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setAllowContentAccess(true);
+        settings.setAllowFileAccess(false);
+        settings.setMediaPlaybackRequiresUserGesture(false);
+
+        WebViewAssetLoader loader =
+                new WebViewAssetLoader.Builder()
+                        .addPathHandler(
+                                "/assets/",
+                                new WebViewAssetLoader.AssetsPathHandler(this)
+                        )
+                        .build();
+
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(
+                    WebView view,
+                    WebResourceRequest request) {
+                return loader.shouldInterceptRequest(request.getUrl());
+            }
+        });
+
+        webView.addJavascriptInterface(new NativeBridge(), "EleCalNative");
+
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onPermissionRequest(final PermissionRequest request) {
+                runOnUiThread(() -> {
+                    boolean cameraRequested = false;
+
+                    for (String resource : request.getResources()) {
+                        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) {
+                            cameraRequested = true;
+                            break;
+                        }
+                    }
+
+                    if (!cameraRequested ||
+                            ContextCompat.checkSelfPermission(
+                                    MainActivity.this,
+                                    Manifest.permission.CAMERA
+                            ) == PackageManager.PERMISSION_GRANTED) {
+                        request.grant(request.getResources());
+                    } else {
+                        request.deny();
+                    }
+                });
+            }
+        });
+
+        webView.loadUrl(
+                "https://appassets.androidplatform.net/assets/www/index.html"
+        );
+
+        setContentView(webView);
+    }
+
+    private boolean cameraGranted() {
+        return ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void requestCameraPermission() {
+        ActivityCompat.requestPermissions(
+                this,
+                new String[]{Manifest.permission.CAMERA},
+                CAMERA_PERMISSION
+        );
+    }
+
+    private void openCamera(String fieldId) {
+        pendingFieldId = fieldId;
+
+        if (!cameraGranted()) {
+            requestCameraPermission();
+            return;
+        }
+
+        try {
+            File directory = new File(getCacheDir(), "camera");
+
+            if (!directory.exists() && !directory.mkdirs()) {
+                return;
+            }
+
+            File photo = File.createTempFile(
+                    "elecal_plate_",
+                    ".jpg",
+                    directory
+            );
+
+            cameraUri = FileProvider.getUriForFile(
+                    this,
+                    getPackageName() + ".fileprovider",
+                    photo
+            );
+
+            Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, cameraUri);
+            intent.addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION |
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            );
+
+            startActivityForResult(intent, CAMERA_REQUEST);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void openGallery(String fieldId) {
+        pendingFieldId = fieldId;
+
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+
+        try {
+            startActivityForResult(
+                    Intent.createChooser(intent, "Elegir imagen de la placa"),
+                    GALLERY_REQUEST
+            );
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void deliverImage(Uri uri) {
+        if (uri == null || pendingFieldId == null) {
+            return;
+        }
+
+        try {
+            InputStream input =
+                    getContentResolver().openInputStream(uri);
+
+            Bitmap bitmap = BitmapFactory.decodeStream(input);
+
+            if (input != null) {
+                input.close();
+            }
+
+            if (bitmap == null) {
+                return;
+            }
+
+            int maxSize = 1600;
+            int width = bitmap.getWidth();
+            int height = bitmap.getHeight();
+
+            if (width > maxSize || height > maxSize) {
+                float scale =
+                        Math.min(
+                                (float) maxSize / width,
+                                (float) maxSize / height
+                        );
+
+                bitmap = Bitmap.createScaledBitmap(
+                        bitmap,
+                        Math.round(width * scale),
+                        Math.round(height * scale),
+                        true
+                );
+            }
+
+            ByteArrayOutputStream output =
+                    new ByteArrayOutputStream();
+
+            bitmap.compress(
+                    Bitmap.CompressFormat.JPEG,
+                    82,
+                    output
+            );
+
+            String base64 = Base64.encodeToString(
+                    output.toByteArray(),
+                    Base64.NO_WRAP
+            );
+
+            String fieldId = pendingFieldId;
+
+            String javascript =
+                    "window.receiveNativeImage(" +
+                    "'" + fieldId + "'," +
+                    "'data:image/jpeg;base64," +
+                    base64 +
+                    "'" +
+                    ");";
+
+            webView.post(
+                    () -> webView.evaluateJavascript(
+                            javascript,
+                            null
+                    )
+            );
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public class NativeBridge {
+
+        @JavascriptInterface
+        public void openCamera(String fieldId) {
+            runOnUiThread(() -> openCamera(fieldId));
+        }
+
+        @JavascriptInterface
+        public void openGallery(String fieldId) {
+            runOnUiThread(() -> openGallery(fieldId));
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(
+            int requestCode,
+            String[] permissions,
+            int[] grantResults) {
+
+        super.onRequestPermissionsResult(
+                requestCode,
+                permissions,
+                grantResults
+        );
+
+        if (requestCode == CAMERA_PERMISSION &&
+                grantResults.length > 0 &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED &&
+                pendingFieldId != null) {
+
+            openCamera(pendingFieldId);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(
+            int requestCode,
+            int resultCode,
+            @Nullable Intent data) {
+
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (resultCode != RESULT_OK) {
+            pendingFieldId = null;
+            return;
+        }
+
+        if (requestCode == CAMERA_REQUEST) {
+            deliverImage(cameraUri);
+            pendingFieldId = null;
+
+        } else if (requestCode == GALLERY_REQUEST &&
+                data != null &&
+                data.getData() != null) {
+
+            deliverImage(data.getData());
+            pendingFieldId = null;
+        }
+    }
+}
+EOF
+
+      - name: Verify
+        shell: bash
+        run: |
+          test -f apk-project/app/src/main/assets/www/index.html
+          test -f apk-project/app/src/main/assets/www/icons/icon.png
+          test -f apk-project/app/src/main/res/drawable/ic_launcher.png
+          test -f apk-project/app/src/main/res/xml/file_paths.xml
+          test -f apk-project/app/src/main/java/com/elecal/app/MainActivity.java
+
+      - name: Build APK
+        working-directory: apk-project
+        shell: bash
+        run: |
+          gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: EleCal-v13-APK
+          path: apk-project/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
